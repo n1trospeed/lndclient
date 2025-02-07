@@ -211,6 +211,9 @@ type WalletKitClient interface {
 	// currently supported.
 	ImportTaprootScript(ctx context.Context,
 		tapscript *waddrmgr.Tapscript) (btcutil.Address, error)
+
+	// GetTransaction returns detailed information about a wallet transaction.
+	GetTransaction(ctx context.Context, txid *chainhash.Hash) (*lnwallet.TransactionDetail, error)
 }
 
 type walletKitClient struct {
@@ -1044,4 +1047,53 @@ func (m *walletKitClient) ImportTaprootScript(ctx context.Context,
 	}
 
 	return p2trAddr, nil
+}
+
+// GetTransaction returns detailed information about a wallet transaction.
+func (m *walletKitClient) GetTransaction(ctx context.Context,
+	txid *chainhash.Hash) (*lnwallet.TransactionDetail, error) {
+
+	rpcCtx, cancel := context.WithTimeout(ctx, m.timeout)
+	defer cancel()
+
+	resp, err := m.client.GetTransaction(
+		m.walletKitMac.WithMacaroonAuth(rpcCtx),
+		&walletrpc.GetTransactionRequest{
+			Txid: txid.String(),
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the raw transaction
+	rawTx, err := hex.DecodeString(resp.TxHash)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode raw tx: %v", err)
+	}
+
+	// var tx wire.MsgTx
+	// if err := tx.Deserialize(bytes.NewReader(rawTx)); err != nil {
+	// 	return nil, fmt.Errorf("unable to deserialize tx: %v", err)
+	// }
+
+	blockHash, err := chainhash.NewHashFromStr(resp.BlockHash)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse block hash: %v", err)
+	}
+
+	// Convert the response to a TransactionDetail
+	detail := &lnwallet.TransactionDetail{
+		Hash:             *txid,
+		Value:            btcutil.Amount(resp.Amount),
+		NumConfirmations: resp.NumConfirmations,
+		BlockHash:        blockHash,
+		BlockHeight:      resp.BlockHeight,
+		Timestamp:        resp.TimeStamp,
+		TotalFees:        resp.TotalFees,
+		RawTx:            rawTx,
+		Label:            resp.Label,
+	}
+
+	return detail, nil
 }
